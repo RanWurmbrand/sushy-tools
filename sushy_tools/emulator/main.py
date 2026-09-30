@@ -35,6 +35,7 @@ from sushy_tools.emulator.resources import drives as drvdriver
 from sushy_tools.emulator.resources import indicators as inddriver
 from sushy_tools.emulator.resources import managers as mgrdriver
 from sushy_tools.emulator.resources import storage as stgdriver
+from sushy_tools.emulator.resources.systems import awsdriver
 from sushy_tools.emulator.resources.systems import fakedriver
 from sushy_tools.emulator.resources.systems import ironicdriver
 from sushy_tools.emulator.resources.systems import libvirtdriver
@@ -156,6 +157,7 @@ class Application(flask.Flask):
         fake = self.config.get('SUSHY_EMULATOR_FAKE_DRIVER')
         os_cloud = self.config.get('SUSHY_EMULATOR_OS_CLOUD')
         ironic_cloud = self.config.get('SUSHY_EMULATOR_IRONIC_CLOUD')
+        aws = self.config.get('SUSHY_EMULATOR_AWS_DRIVER')
 
         if fake:
             result = fakedriver.FakeDriver.initialize(
@@ -176,6 +178,16 @@ class Application(flask.Flask):
 
             result = ironicdriver.IronicDriver.initialize(
                 self.config, self.logger, ironic_cloud)()
+
+        elif aws:
+            if not awsdriver.is_loaded:
+                self.logger.error('AWS driver not loaded')
+                sys.exit(1)
+
+            aws_region = self.config.get('SUSHY_EMULATOR_AWS_REGION')
+
+            result = awsdriver.AwsDriver.initialize(
+                self.config, self.logger, aws_region)()
 
         else:
             if not libvirtdriver.is_loaded:
@@ -1167,6 +1179,16 @@ def parse_args():
                                help='Ironic cloud name. Can also be set via '
                                     'via config variable '
                                     'SUSHY_EMULATOR_IRONIC_CLOUD.')
+    backend_group.add_argument('--aws', action='store_true',
+                               help='Use the AWS EC2 driver. Can also be set '
+                                    'via config variable '
+                                    'SUSHY_EMULATOR_AWS_DRIVER.')
+    parser.add_argument('--aws-region',
+                        type=str,
+                        help='AWS region holding the EC2 instances. Can also '
+                             'be set via config variable '
+                             'SUSHY_EMULATOR_AWS_REGION or the usual AWS '
+                             'environment variables. Only used with --aws.')
 
     return parser.parse_args()
 
@@ -1190,6 +1212,12 @@ def main():
 
     if args.ironic_cloud:
         app.config['SUSHY_EMULATOR_IRONIC_CLOUD'] = args.ironic_cloud
+
+    if args.aws:
+        app.config['SUSHY_EMULATOR_AWS_DRIVER'] = True
+
+    if args.aws_region:
+        app.config['SUSHY_EMULATOR_AWS_REGION'] = args.aws_region
 
     if args.fake:
         app.config['SUSHY_EMULATOR_FAKE_DRIVER'] = True

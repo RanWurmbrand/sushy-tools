@@ -1,0 +1,18 @@
+---
+features:
+  - |
+    Adds an AWS EC2 systems driver, enabled with ``--aws``. It presents EC2
+    instances as Redfish computer systems so that Redfish fence agents can
+    power-manage machines that have no BMC. Only power control is supported:
+    boot device is always reported as ``Hdd``, and virtual media, BIOS and
+    storage are not available.
+
+    A force-off issues ``StopInstances`` with both ``Force`` and
+    ``SkipOsShutdown``, so the instance is cut off without waiting for the
+    guest OS. An instance is only reported as ``Off`` once EC2 reports it as
+    ``stopped``; while it is ``stopping`` or ``shutting-down`` it is still
+    reported as ``On``.
+
+    Requires ``boto3``. Set ``SUSHY_EMULATOR_AWS_REGION`` (or the usual AWS
+    environment variables) for the region, and ``SUSHY_EMULATOR_AWS_TAG`` to
+    limit which instances are exposed.

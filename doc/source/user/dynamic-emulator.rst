@@ -761,6 +761,128 @@ Or update their boot device:
        -H "Content-Type: application/json" -X PATCH \
         http://localhost:8000/redfish/v1/Systems/<uuid>
 
+Systems resource driver: AWS
+++++++++++++++++++++++++++++
+
+You can use the AWS driver to power-manage EC2 instances over Redfish. This is
+useful when a tool insists on talking to a BMC but the machines are cloud
+instances that do not have one, for example a Redfish fence agent fencing
+cluster nodes that run on EC2.
+
+The driver only implements power control, because that is all a fence agent
+ever asks for. Virtual media, BIOS, storage and boot device selection are not
+supported; the boot device is always reported as ``Hdd``.
+
+It needs ``boto3``, which is not installed by default:
+
+.. code-block:: bash
+
+   pip install 'boto3>=1.39.12'
+
+Credentials are resolved by ``boto3`` itself, so on an EC2 instance an
+attached IAM role is the simplest option and keeps keys out of the emulator's
+config. The role needs only:
+
+* ``ec2:DescribeInstances``
+* ``ec2:StartInstances``
+* ``ec2:StopInstances``
+* ``ec2:RebootInstances``
+* ``ec2:SendDiagnosticInterrupt`` (only if you need ``Nmi``)
+
+Start the emulator with:
+
+.. code-block:: bash
+
+   sushy-emulator --aws --aws-region us-east-1
+    * Running on http://localhost:8000/ (Press CTRL+C to quit)
+
+Every non-terminated instance in the region then shows up as a Redfish
+*System*, addressed by its EC2 instance ID:
+
+.. code-block:: bash
+
+   curl http://localhost:8000/redfish/v1/Systems/
+   {
+       "@odata.type": "#ComputerSystemCollection.ComputerSystemCollection",
+       "Name": "Computer System Collection",
+       "Members@odata.count": 1,
+       "Members": [
+
+               {
+                   "@odata.id": "/redfish/v1/Systems/i-0123456789abcdef0"
+               }
+
+       ],
+       ...
+   }
+
+To expose only part of an account, filter by tag with the
+``SUSHY_EMULATOR_AWS_TAG`` config option, for example ``'rhwa-lab=true'``.
+
+Power the instance off and on with the usual Redfish call:
+
+.. code-block:: bash
+
+   curl -d '{"ResetType":"ForceOff"}' \
+       -H "Content-Type: application/json" -X POST \
+        http://localhost:8000/redfish/v1/Systems/i-0123456789abcdef0/Actions/ComputerSystem.Reset
+
+   curl -d '{"ResetType":"On"}' \
+       -H "Content-Type: application/json" -X POST \
+        http://localhost:8000/redfish/v1/Systems/i-0123456789abcdef0/Actions/ComputerSystem.Reset
+
+Reset types map onto EC2 like this:
+
+===================== =================================================
+``ResetType``         EC2 call
+===================== =================================================
+``On``, ``ForceOn``   ``StartInstances``
+``ForceOff``          ``StopInstances`` with ``Force`` and
+                      ``SkipOsShutdown``
+``GracefulShutdown``  ``StopInstances``
+``GracefulRestart``   ``RebootInstances``
+``ForceRestart``      force stop, then start once stopped, in the
+                      background
+``Nmi``               ``SendDiagnosticInterrupt``
+===================== =================================================
+
+.. note::
+   ``Force`` on its own does not cut the instance off: ``StopInstances``
+   still attempts a graceful OS shutdown first and only forces the stop if
+   that times out. ``ForceOff`` therefore passes ``SkipOsShutdown`` as well,
+   which bypasses the guest OS outright. That parameter needs
+   ``botocore>=1.39.12``; with anything older the driver logs a warning and
+   falls back to ``Force`` alone, which is slower and waits on the OS.
+
+.. warning::
+   Do not run the emulator on a machine it may be asked to power off, and
+   in particular not on a cluster node that could be fenced. It would kill
+   itself part-way through the operation.
+
+Power state is reported conservatively:
+
+===================================== ================
+EC2 instance state                    ``PowerState``
+===================================== ================
+``pending``, ``running``              ``On``
+``stopping``, ``shutting-down``       ``On``
+``stopped``                           ``Off``
+``terminated``, or no such instance   omitted
+===================================== ================
+
+.. note::
+   An instance that is still shutting down is deliberately reported as
+   ``On``. A fence agent treats ``Off`` as proof that a machine is dead and
+   lets its workloads start elsewhere; an instance in ``stopping`` is still
+   running and may still be writing to storage, so reporting it as ``Off``
+   early would be unsafe. Only ``stopped`` is reported as ``Off``.
+
+Reset calls return as soon as EC2 has accepted them, rather than waiting for
+the instance to finish transitioning. Clients are expected to poll
+``PowerState``. How long a stop takes is not documented by AWS and varies, so
+if you drive this with a fence agent, check that the agent's power timeout is
+generous enough.
+
 Systems resource driver: fake
 +++++++++++++++++++++++++++++
 
